@@ -89,6 +89,16 @@
             </div>
           </div>
         </div>
+
+        <div class="panel-section" id="paramTuningSection" style="display:none;">
+          <h2>🎛️ 参数调节</h2>
+          <div class="param-tuning-info">
+            <span class="info-badge">拖动滑块实时预览预测效果</span>
+          </div>
+          <div id="paramSliders" class="param-sliders">
+          </div>
+          <button id="resetParamsBtn" class="btn btn-secondary btn-block" style="margin-top:12px;">↺ 重置为拟合值</button>
+        </div>
       </aside>
 
       <main class="center-panel">
@@ -99,6 +109,7 @@
               <div class="legend-info">
                 <span class="legend-item"><span class="legend-color" style="background:#3b82f6"></span>原始数据</span>
                 <span class="legend-item"><span class="legend-color" style="background:#ef4444"></span>拟合曲线</span>
+                <span class="legend-item"><span class="legend-color" style="background:#10b981"></span>预测曲线</span>
                 <span class="legend-item"><span class="legend-color" style="background:#f59e0b"></span>异常点</span>
               </div>
             </div>
@@ -130,11 +141,84 @@
       <aside class="sidebar right-panel">
         <div class="panel-section">
           <div class="tabs">
-            <button class="tab-btn active" data-tab="history">📜 历史记录</button>
+            <button class="tab-btn active" data-tab="prediction">🔮 预测模拟</button>
+            <button class="tab-btn" data-tab="history">📜 历史记录</button>
             <button class="tab-btn" data-tab="datasets">💾 数据集</button>
           </div>
 
-          <div class="tab-content" id="tab-history">
+          <div class="tab-content" id="tab-prediction">
+            <div class="prediction-section">
+              <h3 class="subsection-title">📏 X区间设置</h3>
+              <div class="x-range-inputs">
+                <div class="input-group">
+                  <label>起始 X</label>
+                  <input type="number" step="any" id="predXStart" value="0" placeholder="起始值">
+                </div>
+                <div class="input-group">
+                  <label>结束 X</label>
+                  <input type="number" step="any" id="predXEnd" value="10" placeholder="结束值">
+                </div>
+                <div class="input-group">
+                  <label>步长</label>
+                  <input type="number" step="any" id="predXStep" value="1" placeholder="步长">
+                </div>
+              </div>
+              <div class="extrapolation-warning" id="extrapolationWarning" style="display:none;">
+                <span class="warning-icon">⚠️</span>
+                <span class="warning-text">存在外推范围（超出数据区间）</span>
+              </div>
+              <div class="extrapolation-info" id="extrapolationInfo">
+                <span>数据区间: <strong id="dataRange">—</strong></span>
+                <span>外推限制: <strong>±50%</strong></span>
+              </div>
+              <button id="generatePredBtn" class="btn btn-primary btn-block" style="margin-top:12px;">📊 生成预测表</button>
+            </div>
+
+            <div class="prediction-section" id="predResultSection" style="display:none;">
+              <h3 class="subsection-title">📋 预测结果</h3>
+              <div class="pred-summary">
+                <div class="pred-summary-item">
+                  <span class="pred-summary-label">预测点数</span>
+                  <span class="pred-summary-value" id="predCount">0</span>
+                </div>
+                <div class="pred-summary-item">
+                  <span class="pred-summary-label">内插点</span>
+                  <span class="pred-summary-value" id="predInterpCount">0</span>
+                </div>
+                <div class="pred-summary-item">
+                  <span class="pred-summary-label">外推点</span>
+                  <span class="pred-summary-value" id="predExtraCount">0</span>
+                </div>
+              </div>
+              <div class="pred-table-wrapper">
+                <table class="pred-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>X</th>
+                      <th>预测 Y</th>
+                      <th>类型</th>
+                    </tr>
+                  </thead>
+                  <tbody id="predTableBody">
+                  </tbody>
+                </table>
+              </div>
+              <div class="pred-actions">
+                <input type="text" id="predictionName" placeholder="预测记录名称" class="pred-name-input">
+                <button id="savePredictionBtn" class="btn btn-success btn-block">💾 保存预测记录</button>
+              </div>
+            </div>
+
+            <div class="prediction-section">
+              <h3 class="subsection-title">📂 预测历史</h3>
+              <div id="predictionHistoryList" class="history-list">
+                <div class="empty-state">暂无预测记录</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-content" id="tab-history" style="display:none;">
             <div id="historyList" class="history-list">
               <div class="empty-state">暂无历史记录</div>
             </div>

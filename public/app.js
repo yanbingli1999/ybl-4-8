@@ -4,6 +4,13 @@ let currentResultId = null;
 let currentDatasetId = null;
 let isDirty = false;
 
+let currentFitParams = null;
+let currentTunedParams = null;
+let currentModelType = null;
+let currentDataPoints = [];
+let currentPredictionData = null;
+let extrapolationLimit = 0.5;
+
 const modelTypeLabels = {
   linear: '线性模型',
   exponential: '指数模型',
@@ -343,10 +350,15 @@ function displayFitResult(result) {
     }
   });
 
+  currentDataPoints = result.points;
+  
   fitChart.data.datasets[0].data = normalPoints;
   fitChart.data.datasets[1].data = result.curvePoints;
   fitChart.data.datasets[2].data = outlierPoints;
   fitChart.update();
+  
+  initParamSliders(result.modelType, result.params);
+  updateDataRangeInfo();
 
   const residualData = result.points.map((p, i) => ({
     x: p.x,
@@ -566,12 +578,410 @@ async function deleteDataset(id) {
   }
 }
 
+function initParamSliders(modelType, params) {
+  const section = document.getElementById('paramTuningSection');
+  const slidersContainer = document.getElementById('paramSliders');
+  
+  section.style.display = 'block';
+  
+  const paramConfigs = {
+    linear: [
+      { key: 'a', label: '斜率 a', min: -100, max: 100, step: 0.001 },
+      { key: 'b', label: '截距 b', min: -100, max: 100, step: 0.001 }
+    ],
+    exponential: [
+      { key: 'a', label: '系数 a', min: 0.001, max: 100, step: 0.001 },
+      { key: 'b', label: '指数 b', min: -2, max: 2, step: 0.001 }
+    ],
+    quadratic: [
+      { key: 'a', label: '二次项 a', min: -50, max: 50, step: 0.001 },
+      { key: 'b', label: '一次项 b', min: -100, max: 100, step: 0.001 },
+      { key: 'c', label: '常数项 c', min: -100, max: 100, step: 0.001 }
+    ]
+  };
+  
+  const configs = paramConfigs[modelType] || [];
+  currentFitParams = { ...params };
+  currentTunedParams = { ...params };
+  currentModelType = modelType;
+  
+  slidersContainer.innerHTML = configs.map(config => {
+    const value = params[config.key] || 0;
+    const range = Math.abs(value) * 2 || 10;
+    const min = value - range;
+    const max = value + range;
+    
+    return `
+      <div class="param-slider-item" data-param="${config.key}">
+        <div class="param-slider-header">
+          <span class="param-slider-label">${config.label}</span>
+          <span class="param-slider-value" id="param-value-${config.key}">${value.toFixed(6)}</span>
+        </div>
+        <input type="range" 
+               id="param-slider-${config.key}" 
+               min="${min}" 
+               max="${max}" 
+               step="${(max - min) / 1000}"
+               value="${value}">
+      </div>
+    `;
+  }).join('');
+  
+  configs.forEach(config => {
+    const slider = document.getElementById(`param-slider-${config.key}`);
+    slider.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      currentTunedParams[config.key] = value;
+      document.getElementById(`param-value-${config.key}`).textContent = value.toFixed(6);
+      updatePredictionCurve();
+      updateTunedEquation();
+    });
+  });
+  
+  updateDataRangeInfo();
+}
+
+function updateTunedEquation() {
+  if (!currentModelType || !currentTunedParams) return;
+  
+  let equation;
+  const params = currentTunedParams;
+  
+  switch (currentModelType) {
+    case 'linear':
+      equation = `y = ${params.a.toFixed(6)}x + ${params.b.toFixed(6)}`;
+      break;
+    case 'exponential':
+      equation = `y = ${params.a.toFixed(6)} · e^(${params.b.toFixed(6)}x)`;
+      break;
+    case 'quadratic':
+      equation = `y = ${params.a.toFixed(6)}x² + ${params.b.toFixed(6)}x + ${params.c.toFixed(6)}`;
+      break;
+  }
+  
+  document.getElementById('eqFormula').textContent = equation + ' (调节中)';
+}
+
+function resetParamsToFit() {
+  if (!currentFitParams || !currentModelType) return;
+  
+  currentTunedParams = { ...currentFitParams };
+  
+  Object.keys(currentTunedParams).forEach(key => {
+    const slider = document.getElementById(`param-slider-${key}`);
+    const valueDisplay = document.getElementById(`param-value-${key}`);
+    if (slider) slider.value = currentTunedParams[key];
+    if (valueDisplay) valueDisplay.textContent = currentTunedParams[key].toFixed(6);
+  });
+  
+  updatePredictionCurve();
+  
+  let equation;
+  switch (currentModelType) {
+    case 'linear':
+      equation = `y = ${currentFitParams.a.toFixed(6)}x + ${currentFitParams.b.toFixed(6)}`;
+      break;
+    case 'exponential':
+      equation = `y = ${currentFitParams.a.toFixed(6)} · e^(${currentFitParams.b.toFixed(6)}x)`;
+      break;
+    case 'quadratic':
+      equation = `y = ${currentFitParams.a.toFixed(6)}x² + ${currentFitParams.b.toFixed(6)}x + ${currentFitParams.c.toFixed(6)}`;
+      break;
+  }
+  document.getElementById('eqFormula').textContent = equation;
+  
+  showToast('参数已重置为拟合值', 'info');
+}
+
+function calculateY(x, modelType, params) {
+  switch (modelType) {
+    case 'linear':
+      return params.a * x + params.b;
+    case 'exponential':
+      return params.a * Math.exp(params.b * x);
+    case 'quadratic':
+      return params.a * x * x + params.b * x + params.c;
+    default:
+      return 0;
+  }
+}
+
+function updatePredictionCurve() {
+  if (!fitChart || !currentModelType || !currentTunedParams || currentDataPoints.length === 0) return;
+  
+  const xs = currentDataPoints.map(p => p.x);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const range = maxX - minX || 1;
+  const extendedMin = minX - range * 0.2;
+  const extendedMax = maxX + range * 0.2;
+  const numPoints = 200;
+  const step = (extendedMax - extendedMin) / (numPoints - 1);
+  
+  const predictionPoints = [];
+  for (let i = 0; i < numPoints; i++) {
+    const x = extendedMin + i * step;
+    const y = calculateY(x, currentModelType, currentTunedParams);
+    predictionPoints.push({ x, y });
+  }
+  
+  if (fitChart.data.datasets.length < 4) {
+    fitChart.data.datasets.push({
+      label: '预测曲线',
+      data: [],
+      borderColor: '#10b981',
+      backgroundColor: 'rgba(16, 185, 129, 0.1)',
+      borderWidth: 3,
+      borderDash: [6, 4],
+      pointRadius: 0,
+      showLine: true,
+      tension: 0.1,
+      fill: false
+    });
+  }
+  
+  fitChart.data.datasets[3].data = predictionPoints;
+  fitChart.update('none');
+}
+
+function updateDataRangeInfo() {
+  const points = getTableData();
+  currentDataPoints = points;
+  
+  if (points.length === 0) {
+    document.getElementById('dataRange').textContent = '—';
+    return;
+  }
+  
+  const xs = points.map(p => p.x);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  document.getElementById('dataRange').textContent = `[${minX.toFixed(3)}, ${maxX.toFixed(3)}]`;
+  
+  if (points.length >= 2 && currentModelType) {
+    updatePredictionCurve();
+  }
+}
+
+function checkExtrapolation(xStart, xEnd) {
+  if (currentDataPoints.length === 0) return { hasExtrapolation: false, minData: 0, maxData: 0 };
+  
+  const xs = currentDataPoints.map(p => p.x);
+  const minData = Math.min(...xs);
+  const maxData = Math.max(...xs);
+  const range = maxData - minData || 1;
+  
+  const allowedMin = minData - range * extrapolationLimit;
+  const allowedMax = maxData + range * extrapolationLimit;
+  
+  const hasExtrapolation = xStart < minData || xEnd > maxData;
+  const exceedsLimit = xStart < allowedMin || xEnd > allowedMax;
+  
+  return { hasExtrapolation, exceedsLimit, minData, maxData, allowedMin, allowedMax, range };
+}
+
+function generatePredictionTable() {
+  if (!currentModelType || !currentTunedParams) {
+    showToast('请先执行拟合获取模型参数', 'error');
+    return;
+  }
+  
+  const xStart = parseFloat(document.getElementById('predXStart').value);
+  const xEnd = parseFloat(document.getElementById('predXEnd').value);
+  const xStep = parseFloat(document.getElementById('predXStep').value);
+  
+  if (isNaN(xStart) || isNaN(xEnd) || isNaN(xStep) || xStep <= 0) {
+    showToast('请输入有效的X区间参数', 'error');
+    return;
+  }
+  
+  if (xStart >= xEnd) {
+    showToast('起始X必须小于结束X', 'error');
+    return;
+  }
+  
+  const extrapolation = checkExtrapolation(xStart, xEnd);
+  
+  if (extrapolation.exceedsLimit) {
+    showToast(`外推超出限制！允许范围: [${extrapolation.allowedMin.toFixed(3)}, ${extrapolation.allowedMax.toFixed(3)}]`, 'error');
+    return;
+  }
+  
+  const warningEl = document.getElementById('extrapolationWarning');
+  warningEl.style.display = extrapolation.hasExtrapolation ? 'flex' : 'none';
+  
+  const predictions = [];
+  let x = xStart;
+  let index = 1;
+  
+  while (x <= xEnd + xStep * 0.0001) {
+    const y = calculateY(x, currentModelType, currentTunedParams);
+    const isInterpolation = x >= extrapolation.minData && x <= extrapolation.maxData;
+    predictions.push({
+      index: index++,
+      x: x,
+      y: y,
+      type: isInterpolation ? 'interpolation' : 'extrapolation'
+    });
+    x += xStep;
+  }
+  
+  currentPredictionData = {
+    modelType: currentModelType,
+    params: { ...currentTunedParams },
+    xStart,
+    xEnd,
+    xStep,
+    predictions,
+    dataPoints: [...currentDataPoints]
+  };
+  
+  displayPredictionResults(predictions);
+  document.getElementById('predResultSection').style.display = 'block';
+}
+
+function displayPredictionResults(predictions) {
+  const tbody = document.getElementById('predTableBody');
+  const interpCount = predictions.filter(p => p.type === 'interpolation').length;
+  const extraCount = predictions.filter(p => p.type === 'extrapolation').length;
+  
+  document.getElementById('predCount').textContent = predictions.length;
+  document.getElementById('predInterpCount').textContent = interpCount;
+  document.getElementById('predExtraCount').textContent = extraCount;
+  
+  tbody.innerHTML = predictions.map(p => `
+    <tr>
+      <td>${p.index}</td>
+      <td>${p.x.toFixed(4)}</td>
+      <td>${p.y.toFixed(6)}</td>
+      <td>
+        <span class="pred-type-badge ${p.type === 'interpolation' ? 'pred-type-interp' : 'pred-type-extra'}">
+          ${p.type === 'interpolation' ? '内插' : '外推'}
+        </span>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function savePrediction() {
+  if (!currentPredictionData) {
+    showToast('没有可保存的预测数据', 'error');
+    return;
+  }
+  
+  const name = document.getElementById('predictionName').value || '未命名预测';
+  
+  try {
+    const res = await fetch('/api/predictions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        ...currentPredictionData
+      })
+    });
+    
+    if (!res.ok) throw new Error('保存失败');
+    
+    showToast('预测记录已保存', 'success');
+    loadPredictionHistory();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function loadPredictionHistory() {
+  try {
+    const res = await fetch('/api/predictions');
+    const predictions = await res.json();
+    const listEl = document.getElementById('predictionHistoryList');
+    
+    if (predictions.length === 0) {
+      listEl.innerHTML = '<div class="empty-state">暂无预测记录</div>';
+      return;
+    }
+    
+    listEl.innerHTML = predictions.map(p => `
+      <div class="history-item" data-id="${p.id}">
+        <div class="history-title">${p.name}</div>
+        <span class="history-model">${modelTypeLabels[p.modelType] || p.modelType}</span>
+        <div class="history-meta">
+          <span>${p.predictionsCount || p.predictions?.length || 0} 个预测点</span>
+          <span>${new Date(p.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+        </div>
+        <div class="history-actions">
+          <button class="btn-load" onclick="loadPredictionItem('${p.id}')">加载</button>
+          <button class="btn-delete" onclick="deletePredictionItem('${p.id}')">删除</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('加载预测历史失败:', err);
+  }
+}
+
+async function loadPredictionItem(id) {
+  try {
+    const res = await fetch(`/api/predictions/${id}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    
+    currentModelType = data.modelType;
+    currentTunedParams = { ...data.params };
+    currentFitParams = { ...data.params };
+    currentDataPoints = data.dataPoints || [];
+    currentPredictionData = data;
+    
+    document.getElementById('predXStart').value = data.xStart;
+    document.getElementById('predXEnd').value = data.xEnd;
+    document.getElementById('predXStep').value = data.xStep;
+    document.getElementById('predictionName').value = data.name;
+    
+    if (data.dataPoints && data.dataPoints.length > 0) {
+      setTableData(data.dataPoints);
+    }
+    
+    initParamSliders(data.modelType, data.params);
+    
+    const extrapolation = checkExtrapolation(data.xStart, data.xEnd);
+    document.getElementById('extrapolationWarning').style.display = extrapolation.hasExtrapolation ? 'flex' : 'none';
+    
+    displayPredictionResults(data.predictions);
+    document.getElementById('predResultSection').style.display = 'block';
+    
+    document.querySelector(`input[name="modelType"][value="${data.modelType}"]`).checked = true;
+    
+    if (fitChart && data.dataPoints && data.dataPoints.length > 0) {
+      const normalPoints = data.dataPoints;
+      fitChart.data.datasets[0].data = normalPoints;
+      updatePredictionCurve();
+    }
+    
+    showToast('已加载预测记录', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deletePredictionItem(id) {
+  if (!confirm('确定删除这条预测记录吗？')) return;
+  try {
+    const res = await fetch(`/api/predictions/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('删除失败');
+    showToast('已删除', 'success');
+    loadPredictionHistory();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 function initTabs() {
   const tabBtns = document.querySelectorAll('.tab-btn');
   tabBtns.forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.tab;
       tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+      document.getElementById('tab-prediction').style.display = tab === 'prediction' ? 'block' : 'none';
       document.getElementById('tab-history').style.display = tab === 'history' ? 'block' : 'none';
       document.getElementById('tab-datasets').style.display = tab === 'datasets' ? 'block' : 'none';
     });
@@ -582,6 +992,7 @@ function initEventListeners() {
   document.getElementById('addRowBtn').addEventListener('click', () => {
     addDataRow();
     markDirty();
+    updateDataRangeInfo();
   });
   document.getElementById('clearDataBtn').addEventListener('click', () => {
     if (confirm('确定清空所有数据吗？')) clearDataTable();
@@ -591,6 +1002,21 @@ function initEventListeners() {
   document.getElementById('saveDatasetBtn').addEventListener('click', saveCurrentDataset);
   document.getElementById('updateDatasetBtn').addEventListener('click', updateCurrentDataset);
   document.getElementById('datasetName').addEventListener('input', markDirty);
+  
+  document.getElementById('resetParamsBtn').addEventListener('click', resetParamsToFit);
+  document.getElementById('generatePredBtn').addEventListener('click', generatePredictionTable);
+  document.getElementById('savePredictionBtn').addEventListener('click', savePrediction);
+  
+  ['predXStart', 'predXEnd', 'predXStep'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      const xStart = parseFloat(document.getElementById('predXStart').value);
+      const xEnd = parseFloat(document.getElementById('predXEnd').value);
+      if (!isNaN(xStart) && !isNaN(xEnd) && currentDataPoints.length > 0) {
+        const extrapolation = checkExtrapolation(xStart, xEnd);
+        document.getElementById('extrapolationWarning').style.display = extrapolation.hasExtrapolation ? 'flex' : 'none';
+      }
+    });
+  });
 }
 
 function init() {
@@ -600,7 +1026,9 @@ function init() {
   clearDataTable();
   loadHistory();
   loadDatasets();
+  loadPredictionHistory();
   updateDatasetButtons();
+  updateDataRangeInfo();
 }
 
 document.addEventListener('DOMContentLoaded', init);

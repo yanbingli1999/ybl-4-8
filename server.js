@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DATASETS_FILE = path.join(DATA_DIR, 'datasets.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+const PREDICTIONS_FILE = path.join(DATA_DIR, 'predictions.json');
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -24,6 +25,9 @@ function ensureDataFiles() {
   }
   if (!fs.existsSync(HISTORY_FILE)) {
     fs.writeFileSync(HISTORY_FILE, JSON.stringify([], null, 2));
+  }
+  if (!fs.existsSync(PREDICTIONS_FILE)) {
+    fs.writeFileSync(PREDICTIONS_FILE, JSON.stringify([], null, 2));
   }
 }
 ensureDataFiles();
@@ -317,6 +321,74 @@ app.delete('/api/history/:id', (req, res) => {
     return res.status(404).json({ error: '记录不存在' });
   }
   writeJsonFile(HISTORY_FILE, history);
+  res.json({ success: true });
+});
+
+app.get('/api/predictions', (req, res) => {
+  const predictions = readJsonFile(PREDICTIONS_FILE);
+  const summaries = predictions.map(p => ({
+    id: p.id,
+    name: p.name,
+    modelType: p.modelType,
+    xStart: p.xStart,
+    xEnd: p.xEnd,
+    xStep: p.xStep,
+    predictionsCount: p.predictions?.length || 0,
+    createdAt: p.createdAt
+  }));
+  res.json(summaries);
+});
+
+app.get('/api/predictions/:id', (req, res) => {
+  const { id } = req.params;
+  const predictions = readJsonFile(PREDICTIONS_FILE);
+  const prediction = predictions.find(p => p.id === id);
+  if (!prediction) {
+    return res.status(404).json({ error: '预测记录不存在' });
+  }
+  res.json(prediction);
+});
+
+app.post('/api/predictions', (req, res) => {
+  const { name, modelType, params, xStart, xEnd, xStep, predictions, dataPoints } = req.body;
+  
+  if (!name || !modelType || !params || !Array.isArray(predictions)) {
+    return res.status(400).json({ error: '缺少必要参数' });
+  }
+  
+  const predictionRecord = {
+    id: generateId(),
+    name,
+    modelType,
+    params,
+    xStart,
+    xEnd,
+    xStep,
+    predictions,
+    dataPoints: dataPoints || [],
+    createdAt: new Date().toISOString()
+  };
+  
+  const allPredictions = readJsonFile(PREDICTIONS_FILE);
+  allPredictions.unshift(predictionRecord);
+  
+  if (allPredictions.length > 50) {
+    allPredictions.length = 50;
+  }
+  
+  writeJsonFile(PREDICTIONS_FILE, allPredictions);
+  res.json(predictionRecord);
+});
+
+app.delete('/api/predictions/:id', (req, res) => {
+  const { id } = req.params;
+  let predictions = readJsonFile(PREDICTIONS_FILE);
+  const initialLength = predictions.length;
+  predictions = predictions.filter(p => p.id !== id);
+  if (predictions.length === initialLength) {
+    return res.status(404).json({ error: '预测记录不存在' });
+  }
+  writeJsonFile(PREDICTIONS_FILE, predictions);
   res.json({ success: true });
 });
 
