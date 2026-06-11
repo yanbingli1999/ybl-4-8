@@ -13,10 +13,12 @@ coverage/
 
 # Logs
 *.log
+logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+lerna-debug.log*
 
 # Caches
 .cache/
@@ -27,6 +29,10 @@ pnpm-debug.log*
 .turbo/
 .eslintcache
 .stylelintcache
+.npm/
+.yarn/cache/
+.yarn/unplugged/
+.pnpm-store/
 tmp/
 temp/
 
@@ -47,6 +53,10 @@ temp/
 *.mov
 *.avi
 *.mkv
+*.webm
+*.psd
+*.ai
+*.sketch
 
 # OS and editor files
 .DS_Store
